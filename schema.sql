@@ -32,7 +32,6 @@
 -- no way to preserve old accounts across a run of this file.
 
 drop table if exists reports cascade;
-drop table if exists likes cascade;
 drop table if exists replies cascade;
 drop table if exists posts cascade;
 drop table if exists users cascade;
@@ -81,14 +80,6 @@ create table replies (
   created_at timestamptz not null default now()
 );
 
-create table likes (
-  id uuid primary key default gen_random_uuid(),
-  post_id uuid not null references posts(id) on delete cascade,
-  user_id uuid not null references users(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  unique (post_id, user_id)  -- one like per user per post
-);
-
 create table reports (
   id uuid primary key default gen_random_uuid(),
   post_id uuid not null references posts(id) on delete cascade,
@@ -104,7 +95,6 @@ create table reports (
 
 create index idx_posts_created_at on posts(created_at desc);
 create index idx_replies_post_id on replies(post_id);
-create index idx_likes_post_id on likes(post_id);
 create index idx_reports_status on reports(status);
 
 -- ============================
@@ -203,7 +193,6 @@ for each row execute function public.guard_post_fields();
 alter table users enable row level security;
 alter table posts enable row level security;
 alter table replies enable row level security;
-alter table likes enable row level security;
 alter table reports enable row level security;
 
 -- USERS
@@ -249,16 +238,6 @@ create policy "active users can read replies" on replies
 
 create policy "you can only reply as yourself" on replies
   for insert with check (auth.uid() = user_id and public.is_active_user());
-
--- LIKES
-create policy "active users can read likes" on likes
-  for select using (public.is_active_user() or public.is_admin());
-
-create policy "you can only like as yourself" on likes
-  for insert with check (auth.uid() = user_id and public.is_active_user());
-
-create policy "you can only remove your own like" on likes
-  for delete using (auth.uid() = user_id);
 
 -- REPORTS
 -- Only admins can see the reports queue — who reported what is
@@ -307,7 +286,6 @@ using (bucket_id = 'post-media');
 -- listening to a stream that was never switched on.
 
 alter publication supabase_realtime add table posts;
-alter publication supabase_realtime add table likes;
 alter publication supabase_realtime add table users;
 
 -- ============================
@@ -316,7 +294,7 @@ alter publication supabase_realtime add table users;
 -- Runs once a day on its own, no dashboard steps needed beyond having
 -- pg_cron available (enabled automatically below). Permanently deletes
 -- any message older than 90 days, along with:
---   - its likes, replies, and any reports filed against it (handled
+--   - its replies and any reports filed against it (handled
 --     automatically — those tables already cascade-delete when their
 --     post is removed, see section 1)
 --   - its uploaded photo or voice note file in Storage, deleted here
