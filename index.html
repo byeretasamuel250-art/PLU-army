@@ -321,6 +321,12 @@
     border-top:1px solid #ddd;
     z-index:5;
   }
+  /* While the keyboard is open, it already covers the home-indicator
+     area itself — so adding safe-area padding on top of that just
+     creates a dead gap between the message box and the keyboard. */
+  body.keyboard-open .composer{
+    padding-bottom:6px;
+  }
   .composer .icon-btn{
     background:none;border:none;font-size:20px;cursor:pointer;padding:6px;
     flex-shrink:0;line-height:1;
@@ -2361,11 +2367,13 @@ if(window.visualViewport){
   // Multiple timing catches since keyboard animation speed varies by device.
   const postTextEl = document.getElementById('post-text');
   postTextEl.addEventListener('focus', () => {
+    document.body.classList.add('keyboard-open');
     syncBodyHeight();
     jumpToLatest();
     [50, 150, 300, 500].forEach(ms => setTimeout(() => { syncBodyHeight(); jumpToLatest(); }, ms));
   });
   postTextEl.addEventListener('blur', () => {
+    document.body.classList.remove('keyboard-open');
     // Re-syncing height alone isn't enough here — once the keyboard
     // closes and the chat area grows back, this also needs to check
     // whether the view should follow down into that newly-revealed
