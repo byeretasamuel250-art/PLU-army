@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PLU ARMY — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --plu-yellow:#FFD100;
+    --plu-black:#141414;
+    --plu-maroon:#9C1B3D;
+    --plu-olive:#4B5320;
+    --plu-cream:#FFF8E1;
+    --plu-gray:#6b6b6b;
+    font-family:'Inter',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#f4f4f4;color:var(--plu-black);min-height:100vh;}
+
+  header{
+    background:var(--plu-black);color:var(--plu-yellow);
+    padding:14px 24px;display:flex;align-items:center;gap:12px;
+    border-bottom:4px solid var(--plu-yellow);
+  }
+  header .logo-mark{
+    width:48px;height:48px;border-radius:50%;
+    object-fit:cover;
+    border:2px solid var(--plu-yellow);
+  }
+  header h1{font-family:'Archivo Black',sans-serif;font-size:17px;}
+  header span.tag{font-size:11px;color:var(--plu-cream);opacity:0.7;}
+
+  /* LOGIN GATE */
+  #admin-login{max-width:380px;margin:60px auto;padding:0 20px;}
+  .card{background:white;border-radius:14px;padding:28px 24px;box-shadow:0 2px 14px rgba(0,0,0,0.08);border-top:6px solid var(--plu-maroon);}
+  .card h2{font-family:'Archivo Black',sans-serif;font-size:19px;margin-bottom:6px;}
+  .card p.sub{color:var(--plu-gray);font-size:13px;margin-bottom:18px;}
+  label{display:block;font-size:12px;font-weight:600;margin:12px 0 6px;}
+  input{width:100%;padding:11px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;}
+  input:focus{outline:none;border-color:var(--plu-maroon);}
+  button.primary{width:100%;margin-top:18px;padding:12px;background:var(--plu-maroon);color:white;border:none;border-radius:8px;font-weight:700;cursor:pointer;}
+  button.primary:hover{background:#7d1631;}
+  #login-error{color:var(--plu-maroon);font-size:12px;margin-top:10px;display:none;}
+
+  /* DASHBOARD */
+  #dashboard{display:none;}
+  .tabs{display:flex;gap:4px;background:white;padding:6px;margin:16px 20px 0;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,0.05);max-width:900px;}
+  .tab{flex:1;text-align:center;padding:9px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--plu-gray);}
+  .tab.active{background:var(--plu-black);color:var(--plu-yellow);}
+  main{max-width:900px;margin:16px auto;padding:0 20px 40px;}
+  .panel{display:none;}
+  .panel.active{display:block;}
+
+  .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+  .stat-card{background:white;border-radius:12px;padding:16px;box-shadow:0 1px 6px rgba(0,0,0,0.05);}
+  .stat-card .num{font-family:'Archivo Black',sans-serif;font-size:24px;color:var(--plu-maroon);}
+  .stat-card .label{font-size:11px;color:var(--plu-gray);margin-top:4px;}
+
+  table{width:100%;border-collapse:collapse;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,0.05);}
+  th{background:var(--plu-black);color:var(--plu-yellow);text-align:left;padding:10px 14px;font-size:12px;}
+  td{padding:10px 14px;font-size:13px;border-top:1px solid #f0f0f0;}
+  tr:hover td{background:#fafafa;}
+  .badge{padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;}
+  .badge.active{background:#e6f4ea;color:#1e7d32;}
+  .badge.inactive{background:#fbe9e7;color:var(--plu-maroon);}
+  .badge.pending{background:#fff3e0;color:#e65100;}
+  button.small{padding:6px 12px;border-radius:6px;border:none;font-size:12px;font-weight:600;cursor:pointer;margin-right:6px;}
+  button.small.warn{background:var(--plu-maroon);color:white;}
+  button.small.ok{background:var(--plu-olive);color:white;}
+  button.small.ghost{background:#eee;color:var(--plu-black);}
+
+  .search-bar{margin-bottom:12px;display:flex;gap:10px;}
+  .search-bar input{flex:1;}
+  .bulk-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+
+  .announce-box{background:white;border-radius:12px;padding:16px;margin-bottom:20px;box-shadow:0 1px 6px rgba(0,0,0,0.05);}
+  .announce-box textarea{width:100%;min-height:70px;border:1.5px solid #ddd;border-radius:8px;padding:10px;font-family:'Inter',sans-serif;font-size:14px;resize:vertical;}
+  .empty{text-align:center;color:var(--plu-gray);padding:30px;font-size:13px;}
+</style>
+</head>
+<body>
+
+<header>
+  <img class="logo-mark" src="logo.png" alt="PLU logo">
+  <div><h1>PLU ARMY</h1><span class="tag">Admin Dashboard</span></div>
+</header>
+
+<!-- LOGIN GATE -->
+<div id="admin-login">
+  <div class="card">
+    <h2>Admin sign in</h2>
+    <p class="sub">Enter the name, phone number, and password of an admin account.</p>
+    <label>Full name</label>
+    <input id="admin-name" type="text" placeholder="e.g. Okello James">
+    <label>Phone number</label>
+    <input id="admin-phone" type="tel" inputmode="tel" maxlength="16" placeholder="e.g. +256772000000" oninput="sanitizePhoneInput(this)">
+    <label>Password</label>
+    <input id="admin-password" type="password" placeholder="Password" autocomplete="off">
+    <button class="primary" id="login-btn" onclick="adminLogin()">Sign in</button>
+    <p id="login-error"></p>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <div class="tabs">
+    <div class="tab active" data-panel="overview" onclick="switchTab('overview')">Overview</div>
+    <div class="tab" data-panel="users" onclick="switchTab('users')">Users</div>
+    <div class="tab" data-panel="reports" onclick="switchTab('reports')">Reports</div>
+    <div class="tab" data-panel="announce" onclick="switchTab('announce')">Announcements</div>
+  </div>
+
+  <main>
+    <!-- OVERVIEW -->
+    <div class="panel active" id="panel-overview">
+      <div class="search-bar">
+        <input id="quick-user-search" placeholder="🔍 Find a user by name, phone, or location..." oninput="quickSearchUsers()">
+      </div>
+      <div class="stats-row" id="stats-row">
+        <div class="stat-card"><div class="num" id="stat-users">–</div><div class="label">Total users</div></div>
+        <div class="stat-card"><div class="num" id="stat-active">–</div><div class="label">Active users</div></div>
+        <div class="stat-card"><div class="num" id="stat-pending">–</div><div class="label">Pending reports</div></div>
+      </div>
+      <h3 style="margin-bottom:10px;font-size:14px;">Most active users</h3>
+      <table><thead><tr><th>Name</th><th>Phone</th><th>Posts</th></tr></thead><tbody id="active-users-body"></tbody></table>
+    </div>
+
+    <!-- USERS -->
+    <div class="panel" id="panel-users">
+      <div class="search-bar">
+        <input id="user-search" placeholder="Search by name, phone, or location..." oninput="filterUsers()">
+      </div>
+      <div class="bulk-bar">
+        <label style="font-size:12px;"><input type="checkbox" id="select-all-users" onclick="toggleSelectAll()"> Select all</label>
+        <div>
+          <button class="small ok" onclick="bulkAction('activate', this)">Activate selected</button>
+          <button class="small warn" onclick="bulkAction('deactivate', this)">Deactivate selected</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th></th><th>Name</th><th>Phone</th><th>Location</th><th>Status</th><th>Joined</th><th>Actions</th></tr></thead>
+        <tbody id="users-body"></tbody>
+      </table>
+    </div>
+
+    <!-- REPORTS -->
+    <div class="panel" id="panel-reports">
+      <table>
+        <thead><tr><th>Post excerpt</th><th>Posted by</th><th>Reported by</th><th>Reason</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="reports-body"></tbody>
+      </table>
+    </div>
+
+    <!-- ANNOUNCEMENTS -->
+    <div class="panel" id="panel-announce">
+      <div class="announce-box">
+        <textarea id="announce-text" placeholder="Write an announcement to pin at the top of the feed..."></textarea>
+        <button class="primary" style="margin-top:12px;" id="announce-btn" onclick="postAnnouncement()">Post & pin announcement</button>
+      </div>
+      <h3 style="margin-bottom:10px;font-size:14px;">Currently pinned</h3>
+      <div id="pinned-list"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const SUPABASE_URL = "https://oleribaiqweufesjjmsf.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_kNxerMwFXYbV47jpNz8w1w_DP42Q2pH";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let adminUser = null;
+let allUsers = [];
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
+}
+
+// Keeps the phone field to digits only, with an optional single leading +
+// (mirrors the same function in index.html) — this was referenced by the
+// phone input's oninput but was missing, so typing threw a silent console
+// error and the field never got sanitized.
+function sanitizePhoneInput(el){
+  const hasPlus = el.value.trim().startsWith('+');
+  const digits = el.value.replace(/[^0-9]/g, '');
+  el.value = (hasPlus ? '+' : '') + digits;
+}
+
+// Same normalization as index.html — turns "0772...", "772...", and
+// "+256772..." into one consistent "256772..." form before it's used to
+// look up a user, so admin login matches regardless of how the number
+// was typed.
+function normalizePhone(raw){
+  let digits = raw.replace(/[^0-9]/g, '');
+  if(digits.startsWith('0')){
+    digits = '256' + digits.slice(1);
+  } else if(digits.startsWith('256')){
+    // already in country-code form
+  } else if(digits.length === 9){
+    digits = '256' + digits;
+  }
+  return digits;
+}
+
+// ====== LOGIN LOCKOUT ======
+// Protects against repeated guessing — after 5 wrong attempts, this
+// browser is locked out of admin login for 15 minutes.
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+function getLoginAttempts(){
+  try{
+    return JSON.parse(localStorage.getItem('plu_admin_login_attempts') || '{"count":0,"lockedUntil":null}');
+  }catch(e){ return { count: 0, lockedUntil: null }; }
+}
+function saveLoginAttempts(data){
+  localStorage.setItem('plu_admin_login_attempts', JSON.stringify(data));
+}
+
+async function adminLogin(){
+  const name = document.getElementById('admin-name').value.trim();
+  const phone = document.getElementById('admin-phone').value.trim();
+  const password = document.getElementById('admin-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  errEl.style.display = 'none';
+
+  const attempts = getLoginAttempts();
+  if(attempts.lockedUntil && Date.now() < attempts.lockedUntil){
+    const minsLeft = Math.ceil((attempts.lockedUntil - Date.now()) / 60000);
+    errEl.textContent = `Too many failed attempts. Try again in ${minsLeft} minute${minsLeft === 1 ? '' : 's'}.`;
+    errEl.style.display = 'block';
+    return;
+  }
+
+  if(!name || !phone || !password){
+    errEl.textContent = "Please enter your name, phone number, and password.";
+    errEl.style.display = 'block';
+    return;
+  }
+
+  // Same synthetic-email approach as index.html — avoids needing a real
+  // SMS provider just to enable phone-based login.
+  const authEmail = normalizePhone(phone) + '@plu-army.local';
+
+  const recordFailure = async (message) => {
+    attempts.count = (attempts.count || 0) + 1;
+    if(attempts.count >= MAX_LOGIN_ATTEMPTS){
+      attempts.lockedUntil = Date.now() + LOCKOUT_MINUTES * 60000;
+      attempts.count = 0;
+      errEl.textContent = `Too many failed attempts. Locked for ${LOCKOUT_MINUTES} minutes.`;
+    } else {
+      const left = MAX_LOGIN_ATTEMPTS - attempts.count;
+      errEl.textContent = `${message} (${left} attempt${left === 1 ? '' : 's'} left)`;
+    }
+    saveLoginAttempts(attempts);
+    errEl.style.display = 'block';
+    await sb.auth.signOut();
+  };
+
+  // Instant feedback the moment Sign in is tapped — this can take a
+  // couple of seconds on a slow connection, and an unchanged button
+  // makes it look like nothing happened.
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Signing in…';
+
+  const { data: authData, error: authError } = await sb.auth.signInWithPassword({ email: authEmail, password });
+
+  if(authError || !authData.user){
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+    // A genuine network failure (bad connection, server unreachable) is
+    // not the same as actually typing the wrong password — it shouldn't
+    // burn one of the 5 attempts before lockout, since that would punish
+    // someone for a bad connection rather than a wrong guess.
+    if(authError?.message?.includes('Failed to fetch')){
+      errEl.textContent = "Couldn't reach the server — check your internet connection and try again.";
+      errEl.style.display = 'block';
+      return;
+    }
+    await recordFailure("Wrong phone number or password.");
+    return;
+  }
+
+  const { data } = await sb.from('users').select('*').eq('id', authData.user.id).maybeSingle();
+  if(!data || !data.is_admin || data.name.trim().toLowerCase() !== name.toLowerCase()){
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+    await recordFailure("No admin account found matching that name and phone number.");
+    return;
+  }
+
+  // Successful login — reset the attempt counter
+  saveLoginAttempts({ count: 0, lockedUntil: null });
+
+  adminUser = data;
+  document.getElementById('admin-login').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  loadOverview();
+  loadUsers();
+  loadReports();
+  loadPinned();
+  setupAdminRealtime();
+}
+
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.panel === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+}
+
+// ===== OVERVIEW =====
+async function loadOverview(){
+  const { data: users } = await sb.from('users').select('id, name, phone, is_active');
+  const { data: posts } = await sb.from('posts').select('id, user_id').eq('is_deleted', false);
+  const { data: pending } = await sb.from('reports').select('id').eq('status', 'pending');
+
+  document.getElementById('stat-users').textContent = users?.length || 0;
+  document.getElementById('stat-active').textContent = users?.filter(u=>u.is_active).length || 0;
+  document.getElementById('stat-pending').textContent = pending?.length || 0;
+
+  const counts = {};
+  (posts||[]).forEach(p => counts[p.user_id] = (counts[p.user_id]||0)+1);
+  const top = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const body = document.getElementById('active-users-body');
+  if(!top.length){ body.innerHTML = '<tr><td colspan="3" class="empty">No posts yet</td></tr>'; return; }
+  body.innerHTML = top.map(([uid,count]) => {
+    const u = users.find(x=>x.id===uid);
+    return `<tr><td>${escapeHtml(u?.name||'Unknown')}</td><td>${escapeHtml(u?.phone||'')}</td><td>${count}</td></tr>`;
+  }).join('');
+}
+
+// ===== USERS =====
+async function loadUsers(){
+  const { data } = await sb.from('users').select('*').order('created_at', {ascending:false});
+  allUsers = data || [];
+  renderUsers(allUsers);
+}
+
+function renderUsers(list){
+  const body = document.getElementById('users-body');
+  if(!list.length){ body.innerHTML = '<tr><td colspan="7" class="empty">No users found</td></tr>'; return; }
+  body.innerHTML = list.map(u => {
+    // The database silently refuses to let anyone change their own
+    // is_active/is_admin (even an admin editing their own row) — that's
+    // the real, non-bypassable protection. Without this check, tapping
+    // Deactivate on your own row would flip the badge on screen (the
+    // update "succeeds" with no error) while the database quietly keeps
+    // you active — then the next refresh snaps it back, looking like a
+    // glitch. Hiding the button on your own row avoids that confusion
+    // entirely instead of just reacting to it after the fact.
+    const isSelf = u.id === adminUser?.id;
+    return `
+    <tr>
+      <td>${isSelf ? '' : `<input type="checkbox" class="user-check" value="${u.id}">`}</td>
+      <td>${escapeHtml(u.name)}${isSelf ? ' <span style="color:var(--plu-gray);font-size:11px;">(you)</span>' : ''}</td>
+      <td>${escapeHtml(u.phone)}</td>
+      <td>${escapeHtml(u.location) || '—'}</td>
+      <td><span class="badge ${u.is_active?'active':'inactive'}">${u.is_active?'Active':'Inactive'}</span></td>
+      <td>${new Date(u.created_at).toLocaleDateString('en-GB')}</td>
+      <td>
+        ${isSelf
+          ? '—'
+          : (u.is_active
+            ? `<button class="small warn" onclick="setUserStatus('${u.id}', false)">Deactivate</button>`
+            : `<button class="small ok" onclick="setUserStatus('${u.id}', true)">Activate</button>`)}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function filterUsers(){
+  const q = document.getElementById('user-search').value.toLowerCase();
+  const qDigits = q.replace(/[^0-9]/g, '');
+  renderUsers(allUsers.filter(u =>
+    u.name.toLowerCase().includes(q) ||
+    u.phone.includes(q) ||
+    (qDigits && u.phone.replace(/[^0-9]/g, '').includes(qDigits)) ||
+    (u.location||'').toLowerCase().includes(q)
+  ));
+}
+
+function quickSearchUsers(){
+  const value = document.getElementById('quick-user-search').value;
+  switchTab('users');
+  document.getElementById('user-search').value = value;
+  filterUsers();
+}
+
+async function setUserStatus(id, active){
+  // Update the badge and button on screen immediately, before waiting on
+  // the network — the person shouldn't have to stare at an unchanged
+  // button wondering if their tap registered. If the request actually
+  // fails, we put the row back exactly as it was and explain why.
+  const row = document.querySelector(`.user-check[value="${id}"]`)?.closest('tr');
+  const previousHtml = row ? row.innerHTML : null;
+  if(row){
+    const u = allUsers.find(x => x.id === id);
+    if(u) u.is_active = active;
+    row.querySelector('.badge').className = 'badge ' + (active ? 'active' : 'inactive');
+    row.querySelector('.badge').textContent = active ? 'Active' : 'Inactive';
+    const actionCell = row.children[6];
+    actionCell.innerHTML = active
+      ? `<button class="small warn" onclick="setUserStatus('${id}', false)">Deactivate</button>`
+      : `<button class="small ok" onclick="setUserStatus('${id}', true)">Activate</button>`;
+  }
+
+  const { error } = await sb.from('users').update({is_active: active}).eq('id', id);
+  if(error){
+    if(row) row.innerHTML = previousHtml; // put it back exactly as it was
+    const friendly = error.message?.includes('Failed to fetch')
+      ? "Couldn't reach the server — check your internet connection and try again."
+      : "Couldn't update that account: " + error.message;
+    alert(friendly);
+    return;
+  }
+  loadOverview();
+}
+
+function toggleSelectAll(){
+  const checked = document.getElementById('select-all-users').checked;
+  document.querySelectorAll('.user-check').forEach(c => c.checked = checked);
+}
+
+async function bulkAction(action, clickedBtn){
+  const ids = Array.from(document.querySelectorAll('.user-check:checked')).map(c=>c.value);
+  if(!ids.length){ alert("Select at least one user first."); return; }
+
+  // Bulk actions touch several rows at once, so a full optimistic patch
+  // per row is more complexity than it's worth here — instead we give
+  // instant feedback by disabling the buttons and showing a working
+  // state, so tapping never feels like nothing happened.
+  const buttons = document.querySelectorAll('.bulk-bar button');
+  buttons.forEach(b => b.disabled = true);
+  const originalLabel = clickedBtn?.textContent;
+  if(clickedBtn) clickedBtn.textContent = 'Working…';
+
+  const { error } = await sb.from('users').update({is_active: action === 'activate'}).in('id', ids);
+
+  buttons.forEach(b => b.disabled = false);
+  if(clickedBtn) clickedBtn.textContent = originalLabel;
+
+  if(error){
+    const friendly = error.message?.includes('Failed to fetch')
+      ? "Couldn't reach the server — check your internet connection and try again."
+      : "Couldn't update those accounts: " + error.message;
+    alert(friendly);
+    return;
+  }
+  loadUsers();
+  loadOverview();
+}
+
+// ===== REPORTS =====
+async function loadReports(){
+  const { data } = await sb
+    .from('reports')
+    .select('*, posts(content, type, users(name)), reported_by_user:users!reports_reported_by_fkey(name)')
+    .order('created_at', {ascending:false});
+
+  const body = document.getElementById('reports-body');
+  if(!data || !data.length){ body.innerHTML = '<tr><td colspan="6" class="empty">No reports</td></tr>'; return; }
+
+  body.innerHTML = data.map(r => {
+    let excerpt = '(media post)';
+    if(r.posts?.type === 'text') excerpt = (r.posts.content || '').slice(0,60);
+    return `
+    <tr>
+      <td>${escapeHtml(excerpt)}</td>
+      <td>${escapeHtml(r.posts?.users?.name || 'Unknown')}</td>
+      <td>${escapeHtml(r.reported_by_user?.name || 'Unknown')}</td>
+      <td>${escapeHtml(r.reason) || '—'}</td>
+      <td><span class="badge ${r.status==='pending'?'pending':'active'}">${r.status}</span></td>
+      <td>
+        ${r.status==='pending' ? `
+          <button class="small warn" onclick="resolveReport('${r.id}', '${r.post_id}', true)">Delete post</button>
+          <button class="small ghost" onclick="resolveReport('${r.id}', '${r.post_id}', false)">Dismiss</button>
+        ` : '—'}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function resolveReport(reportId, postId, deletePost){
+  // Instant feedback — grey the row out and disable its buttons the
+  // moment it's tapped, rather than leaving it looking untouched while
+  // two separate requests happen behind the scenes.
+  const row = document.querySelectorAll(`button[onclick*="'${reportId}'"]`)[0]?.closest('tr');
+  if(row){
+    row.style.opacity = '0.5';
+    row.querySelectorAll('button').forEach(b => b.disabled = true);
+  }
+
+  if(deletePost){
+    const { error } = await sb.from('posts').update({is_deleted:true}).eq('id', postId);
+    if(error){
+      if(row){ row.style.opacity = '1'; row.querySelectorAll('button').forEach(b => b.disabled = false); }
+      const friendly = error.message?.includes('Failed to fetch')
+        ? "Couldn't reach the server — check your internet connection and try again."
+        : "Couldn't delete that post: " + error.message;
+      alert(friendly);
+      return;
+    }
+  }
+  const { error } = await sb.from('reports').update({status: deletePost ? 'reviewed' : 'dismissed'}).eq('id', reportId);
+  if(error){
+    if(row){ row.style.opacity = '1'; row.querySelectorAll('button').forEach(b => b.disabled = false); }
+    const friendly = error.message?.includes('Failed to fetch')
+      ? "Couldn't reach the server — check your internet connection and try again."
+      : "Couldn't update that report: " + error.message;
+    alert(friendly);
+    return;
+  }
+  loadReports();
+  loadOverview();
+}
+
+// ===== ANNOUNCEMENTS =====
+async function postAnnouncement(){
+  const text = document.getElementById('announce-text').value.trim();
+  if(!text) return;
+
+  const btn = document.getElementById('announce-btn');
+  if(btn.disabled) return; // already posting — ignore a second tap
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Posting…';
+
+  const { error } = await sb.from('posts').insert({user_id: adminUser.id, type:'text', content:text, is_pinned:true});
+
+  btn.disabled = false;
+  btn.textContent = originalLabel;
+
+  if(error){
+    const friendly = error.message?.includes('Failed to fetch')
+      ? "Couldn't reach the server — check your internet connection and try again."
+      : "Couldn't post that announcement: " + error.message;
+    alert(friendly);
+    return;
+  }
+  document.getElementById('announce-text').value = '';
+  loadPinned();
+  loadOverview();
+}
+
+async function loadPinned(){
+  const { data } = await sb.from('posts').select('*, users(name)').eq('is_pinned', true).eq('is_deleted', false).order('created_at', {ascending:false});
+  const el = document.getElementById('pinned-list');
+  if(!data || !data.length){ el.innerHTML = '<div class="empty">No pinned announcements</div>'; return; }
+  el.innerHTML = data.map(p => `
+    <div class="announce-box" style="border-left:4px solid var(--plu-yellow);">
+      <div style="font-size:12px;color:var(--plu-gray);margin-bottom:6px;">${escapeHtml(p.users?.name || 'Admin')} · ${new Date(p.created_at).toLocaleString('en-GB')}</div>
+      <div style="font-size:14px;">${escapeHtml(p.content)}</div>
+      <button class="small warn" style="margin-top:10px;" onclick="unpin('${p.id}')">Unpin</button>
+    </div>
+  `).join('');
+}
+
+async function unpin(id){
+  // Remove it from screen the instant it's tapped, rather than leaving
+  // the card sitting there unchanged while the request is in flight.
+  const card = document.querySelectorAll(`button[onclick*="'${id}'"]`)[0]?.closest('.announce-box');
+  if(card) card.style.display = 'none';
+
+  const { error } = await sb.from('posts').update({is_pinned:false}).eq('id', id);
+  if(error){
+    if(card) card.style.display = '';
+    const friendly = error.message?.includes('Failed to fetch')
+      ? "Couldn't reach the server — check your internet connection and try again."
+      : "Couldn't unpin that post: " + error.message;
+    alert(friendly);
+    return;
+  }
+  loadPinned();
+}
+
+// ====== LIVE UPDATES ======
+// Keeps every panel current automatically — no need to switch tabs or
+// reload the page to see a new registration, report, or post come in.
+function setupAdminRealtime(){
+  sb.channel('admin-dashboard')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+      loadOverview();
+      loadUsers().then(filterUsers); // keep whatever search the admin was typing, don't reset it
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, () => {
+      loadOverview();
+      loadPinned();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'reports' }, () => {
+      loadOverview();
+      loadReports();
+    })
+    .subscribe();
+}
+
+</script>
+</body>
+</html>
