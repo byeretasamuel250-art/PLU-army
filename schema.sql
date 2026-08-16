@@ -225,12 +225,24 @@ create policy "you or an admin can update a profile" on users
   with check (auth.uid() = id or public.is_admin());
 
 -- POSTS
--- Must be active (or admin) to read anything at all. Active users
--- see all non-deleted posts, plus their own deleted ones; admins
--- see everything regardless. Deactivated non-admins see nothing.
+-- Must be active (or admin) to read anything at all. Active users see
+-- non-deleted posts (plus their own deleted ones) that are EITHER
+-- pinned (admin announcements are visible to everyone regardless of
+-- when they joined), their own, or posted on/after the day they
+-- joined — a new member doesn't see chat history from before they
+-- were part of the group. Admins see everything regardless.
+-- Deactivated non-admins see nothing.
 create policy "visible posts are readable by everyone" on posts
   for select using (
-    ((is_deleted = false or auth.uid() = user_id) and public.is_active_user())
+    (
+      (is_deleted = false or auth.uid() = user_id)
+      and public.is_active_user()
+      and (
+        is_pinned
+        or auth.uid() = user_id
+        or created_at >= (select created_at from users where id = auth.uid())
+      )
+    )
     or public.is_admin()
   );
 
