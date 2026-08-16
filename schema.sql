@@ -166,8 +166,14 @@ create trigger trg_guard_user_fields
 before update on users
 for each row execute function public.guard_user_fields();
 
--- Only an admin can pin/unpin a post — a regular user editing
--- their own message can't sneak a pin through.
+-- Only an admin can pin a post — whether they're editing an existing
+-- one OR creating a brand new one. The app's own UI never sends
+-- is_pinned on a normal member's post, but without this trigger
+-- covering INSERT too, nothing stops someone from calling the
+-- Supabase API directly with their own login and pinning their own
+-- post the moment they create it. Covering both INSERT and UPDATE
+-- closes that gap; TG_OP tells us which one we're in, since there's
+-- no "old" row yet to fall back to on an insert.
 create or replace function public.guard_post_fields()
 returns trigger
 language plpgsql
@@ -176,14 +182,18 @@ set search_path = public
 as $$
 begin
   if not public.is_admin() then
-    new.is_pinned := old.is_pinned;
+    if TG_OP = 'INSERT' then
+      new.is_pinned := false;
+    else
+      new.is_pinned := old.is_pinned;
+    end if;
   end if;
   return new;
 end;
 $$;
 
 create trigger trg_guard_post_fields
-before update on posts
+before insert or update on posts
 for each row execute function public.guard_post_fields();
 
 -- ============================
@@ -312,11 +322,18 @@ set search_path = public
 as $$
 begin
   -- Remove the media file first, while the post row (and therefore its
-  -- content URL) still exists to read the file's path from.
+  -- content) still exists to read the file's path from. For image/audio
+  -- posts, `content` is a JSON string like {"url":"...","caption":"..."}
+  -- (not a bare URL — the app stores the caption alongside it), so the
+  -- URL has to be pulled out of the JSON with ->>'url' before the
+  -- storage path can be extracted from it. Extracting it as if content
+  -- were the raw URL (as an earlier version of this did) silently
+  -- matched nothing, since no real object name ends with the leftover
+  -- JSON text that approach left stuck on the end.
   delete from storage.objects
   where bucket_id = 'post-media'
     and name in (
-      select regexp_replace(content, '^.*/post-media/', '')
+      select regexp_replace(content::json->>'url', '^.*/post-media/', '')
       from posts
       where type in ('image', 'audio')
         and content is not null
