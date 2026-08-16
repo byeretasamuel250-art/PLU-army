@@ -69,6 +69,7 @@ create table posts (
   is_deleted boolean not null default false,  -- soft delete by admin/owner
   is_edited boolean not null default false,
   reply_to uuid references posts(id) on delete set null,
+  mentioned_user_ids uuid[] not null default '{}', -- who was @mentioned, for push notifications
   created_at timestamptz not null default now()
 );
 
@@ -286,6 +287,34 @@ with check (bucket_id = 'post-media' and auth.role() = 'authenticated');
 create policy "anyone can view media"
 on storage.objects for select
 using (bucket_id = 'post-media');
+
+-- ============================
+-- 6.5. PUSH SUBSCRIPTIONS (for @mention notifications)
+-- ============================
+-- One row per device someone has opted in to notifications on. The
+-- Edge Function that sends notifications (deployed separately, not
+-- part of this SQL file) reads across everyone's subscriptions using
+-- its own elevated key, which is expected to bypass the RLS below —
+-- that key is never exposed to the app itself.
+
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  endpoint text not null unique,
+  subscription jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+alter table push_subscriptions enable row level security;
+
+create policy "you can register your own push subscription" on push_subscriptions
+  for insert with check (auth.uid() = user_id and public.is_active_user());
+
+create policy "you can read your own push subscriptions" on push_subscriptions
+  for select using (auth.uid() = user_id);
+
+create policy "you can remove your own push subscription" on push_subscriptions
+  for delete using (auth.uid() = user_id);
 
 -- ============================
 -- 7. REALTIME
