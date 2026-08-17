@@ -17,11 +17,29 @@
 // 3. Push notifications — a phone can receive one of these even while
 //    the app itself is completely closed, which is the whole reason
 //    this has to live in the service worker rather than in index.html.
-const MEDIA_CACHE_NAME = 'plu-media-cache-v1';
+const MEDIA_CACHE_NAME = 'plu-media-cache-v2';
 const MEDIA_URL_MARKER = '/storage/v1/object/public/post-media/';
 
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    // Bumped v1 -> v2 alongside the download-verification fix below.
+    // Without also clearing out the old cache, anyone who'd already hit
+    // the truncated-download bug would keep being served that same bad,
+    // permanently-silent-partway-through file forever — the fix only
+    // stops it from happening to a NEW download, it can't retroactively
+    // repair one that's already sitting in the old cache. Deleting any
+    // cache under the old name forces exactly one fresh, now-verified
+    // re-download of whatever they'd already cached, the next time they
+    // play it.
+    const names = await caches.keys();
+    await Promise.all(
+      names.filter(n => n.startsWith('plu-media-cache-') && n !== MEDIA_CACHE_NAME)
+           .map(n => caches.delete(n))
+    );
+    await self.clients.claim();
+  })());
+});
 
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
@@ -42,24 +60,36 @@ async function handleMediaRequest(request){
   let cached = await cache.match(request);
 
   if(!cached){
-    // Always fetch the COMPLETE file from the network (even if this
-    // particular request came in with a Range header) so we cache one
-    // full copy to slice from on every future request, including this one.
-    const networkHeaders = new Headers(request.headers);
-    networkHeaders.delete('range');
-    const response = await fetch(new Request(request.url, { headers: networkHeaders }));
-    // Only cache a real, successful download — never cache an error
-    // response, which would otherwise get stuck "downloaded" forever.
-    if(response && response.ok){
-      await cache.put(request, response.clone());
-      cached = response;
-    } else {
-      return response;
+    cached = await fetchAndCacheFullFile(request, cache);
+    if(!cached){
+      // Every retry inside fetchAndCacheFullFile failed — a real outage,
+      // not just one bad moment. Rather than failing the request outright
+      // (which is what "plays, then dies partway through" actually was:
+      // a dropped mobile-data connection during this download, with no
+      // retry, hard-failed the whole thing), fall back to a plain
+      // pass-through to the network with the original Range header
+      // intact. Android plays that fine either way; the next tap of Play
+      // retries the full caching path fresh regardless.
+      try{ return await fetch(request); }
+      catch(e){ return new Response('Network error — check your connection and try again.', { status: 503 }); }
     }
   }
 
   const rangeHeader = request.headers.get('range');
-  const buffer = await cached.clone().arrayBuffer();
+  let buffer;
+  try{
+    buffer = await cached.clone().arrayBuffer();
+  }catch(e){
+    // A corrupted or partially-written cache entry (rare — e.g. the app
+    // was force-closed mid-write on a previous attempt). Drop it and try
+    // once more from a clean network fetch instead of serving a broken
+    // file forever from here on.
+    await cache.delete(request);
+    cached = await fetchAndCacheFullFile(request, cache);
+    if(!cached) return new Response('Media unavailable — try again.', { status: 503 });
+    try{ buffer = await cached.clone().arrayBuffer(); }
+    catch(e2){ return new Response('Media unavailable — try again.', { status: 503 }); }
+  }
   const totalLength = buffer.byteLength;
 
   if(!rangeHeader){
@@ -71,11 +101,23 @@ async function handleMediaRequest(request){
     return new Response(buffer, { status: 200, statusText: 'OK', headers });
   }
 
-  // Parse "bytes=START-END" (either side may be omitted) and clamp to
-  // the file's real size.
+  // Parse "bytes=START-END" and clamp to the file's real size. Either
+  // side may be omitted ("bytes=500-" means "from 500 to the end"), and
+  // a request can also come in "suffix" form — "bytes=-500" means "the
+  // LAST 500 bytes", not "bytes 0 through 500" — which the previous
+  // version of this parsing didn't distinguish, silently serving the
+  // wrong slice (the file's start instead of its end) whenever a player
+  // used that form.
   const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader);
-  let start = match && match[1] ? parseInt(match[1], 10) : 0;
-  let end = match && match[2] ? parseInt(match[2], 10) : totalLength - 1;
+  let start, end;
+  if(match && !match[1] && match[2]){
+    const suffixLength = parseInt(match[2], 10);
+    start = Math.max(0, totalLength - suffixLength);
+    end = totalLength - 1;
+  } else {
+    start = match && match[1] ? parseInt(match[1], 10) : 0;
+    end = match && match[2] ? parseInt(match[2], 10) : totalLength - 1;
+  }
   if(isNaN(start) || start < 0) start = 0;
   if(isNaN(end) || end >= totalLength) end = totalLength - 1;
   if(start > end){ start = 0; end = totalLength - 1; }
@@ -87,6 +129,85 @@ async function handleMediaRequest(request){
   headers.set('Content-Length', String(slice.byteLength));
 
   return new Response(slice, { status: 206, statusText: 'Partial Content', headers });
+}
+
+// Downloads the complete file and stores it in the cache, retrying a
+// couple of times first with a short, increasing pause between attempts.
+// Mobile-data connections dropping mid-download are routine on the kind
+// of networks this app runs on — without any retry here, that one bad
+// moment permanently "broke" that message's playback until the page was
+// reloaded, which is what plays-then-fails actually was. Returns the
+// cached Response on success, or null if every attempt genuinely failed.
+//
+// Concurrent requests for the SAME file (iOS Safari's <audio> element
+// routinely fires off several overlapping Range requests for one voice
+// note right as playback starts) are collapsed into one shared download
+// instead of each kicking off its own — both to avoid hammering the
+// network three times over for one tap of Play, and because two
+// simultaneous downloads finishing at different times and both calling
+// cache.put() for the same key is exactly the kind of race that could
+// leave whichever one lands last (good or bad) as the final cached copy.
+const inFlightDownloads = new Map(); // request URL -> shared in-progress download promise
+async function fetchAndCacheFullFile(request, cache){
+  const key = request.url;
+  if(inFlightDownloads.has(key)) return inFlightDownloads.get(key);
+
+  const promise = (async () => {
+    const networkHeaders = new Headers(request.headers);
+    networkHeaders.delete('range');
+    const maxAttempts = 3;
+    for(let attempt = 0; attempt < maxAttempts; attempt++){
+      try{
+        const response = await fetch(new Request(request.url, { headers: networkHeaders }));
+        if(response && response.ok){
+          // A dropped mobile-data connection mid-download can end the
+          // response stream early WITHOUT fetch() itself throwing — it
+          // still comes back "ok", just shorter than it should be.
+          // Caching that truncated file as if it were the complete
+          // voice note is exactly what caused playback to keep visibly
+          // running (the player's own clock, based on the container's
+          // declared duration) while going silent partway through: it
+          // hit the missing tail of the file with nothing real left to
+          // decode. Comparing the actual downloaded size against the
+          // server's own declared Content-Length (Supabase Storage
+          // always sends one for a complete object) catches that before
+          // it's ever cached, and retries instead.
+          const declaredLength = response.headers.get('content-length');
+          const bodyBuffer = await response.clone().arrayBuffer();
+          if(declaredLength && bodyBuffer.byteLength !== parseInt(declaredLength, 10)){
+            if(attempt < maxAttempts - 1){
+              await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+              continue;
+            }
+            return null;
+          }
+          // Only cache a real, complete, successful download — never
+          // cache an error response or a truncated one, either of which
+          // would otherwise get stuck "downloaded" forever.
+          await cache.put(request, response.clone());
+          return response;
+        }
+        // A real HTTP error (404, 410, etc.), not a network drop — retrying
+        // the exact same request won't produce a different file, so stop
+        // here instead of hammering the server three times for nothing.
+        return null;
+      }catch(e){
+        // A genuine network-level failure (connection dropped mid-transfer,
+        // request timed out) — exactly the transient case worth a retry.
+        if(attempt < maxAttempts - 1){
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        }
+      }
+    }
+    return null;
+  })();
+
+  inFlightDownloads.set(key, promise);
+  try{
+    return await promise;
+  } finally {
+    inFlightDownloads.delete(key);
+  }
 }
 
 // ====== PUSH NOTIFICATIONS ======
