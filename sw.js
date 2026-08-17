@@ -60,18 +60,36 @@ async function handleMediaRequest(request){
   let cached = await cache.match(request);
 
   if(!cached){
-    cached = await fetchAndCacheFullFile(request, cache);
+    // Kick the full-file download+cache off in the background (deduped
+    // via inFlightDownloads inside fetchAndCacheFullFile, so this is
+    // still exactly one download no matter how many overlapping Range
+    // requests iOS fires while starting playback) — but this first,
+    // never-yet-cached play does NOT wait on it to finish. A long voice
+    // note is precisely the case where waiting for the WHOLE file
+    // before playing even a second of it meant the download simply
+    // hadn't finished (and, on a bad connection, kept retrying) by the
+    // time the player itself gave up and reported a load failure —
+    // short clips "worked" only because their full download usually
+    // finished quickly enough to beat that timeout. Passing this first
+    // request straight through to the network instead — honoring
+    // whatever byte range the player actually asked for, same as a
+    // plain, un-cached audio URL would behave — lets it start playing
+    // immediately regardless of the file's length. Once the background
+    // download finishes, every request after this one hits the cache
+    // and gets the fast, locally-sliced path below.
+    fetchAndCacheFullFile(request, cache).catch(() => {});
+
+    try{
+      const direct = await fetch(request);
+      if(direct && (direct.ok || direct.status === 206)) return direct;
+    }catch(e){ /* a real network failure on the direct attempt — fall through */ }
+
+    // The direct pass-through itself failed outright (not just slow —
+    // an actual error, e.g. offline). See if the background download
+    // above has managed to finish in the meantime before giving up.
+    cached = await cache.match(request);
     if(!cached){
-      // Every retry inside fetchAndCacheFullFile failed — a real outage,
-      // not just one bad moment. Rather than failing the request outright
-      // (which is what "plays, then dies partway through" actually was:
-      // a dropped mobile-data connection during this download, with no
-      // retry, hard-failed the whole thing), fall back to a plain
-      // pass-through to the network with the original Range header
-      // intact. Android plays that fine either way; the next tap of Play
-      // retries the full caching path fresh regardless.
-      try{ return await fetch(request); }
-      catch(e){ return new Response('Network error — check your connection and try again.', { status: 503 }); }
+      return new Response('Media unavailable — check your connection and try again.', { status: 503 });
     }
   }
 
