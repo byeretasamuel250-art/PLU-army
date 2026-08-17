@@ -79,14 +79,19 @@ async function handleMediaRequest(request){
     // and gets the fast, locally-sliced path below.
     fetchAndCacheFullFile(request, cache).catch(() => {});
 
-    try{
-      const direct = await fetch(request);
-      if(direct && (direct.ok || direct.status === 206)) return direct;
-    }catch(e){ /* a real network failure on the direct attempt — fall through */ }
+    // This first play is what the person actually hears, so — same as
+    // fetchAndCacheFullFile below — a response that comes back "ok" but
+    // shorter than its own declared Content-Length (a mobile connection
+    // dropping mid-stream without fetch() itself throwing) must NOT be
+    // handed straight to the player: that's exactly what "plays, then
+    // errors partway through" was. fetchDirectVerified retries a couple
+    // of times first instead of trusting the first response blindly.
+    const direct = await fetchDirectVerified(request);
+    if(direct) return direct;
 
-    // The direct pass-through itself failed outright (not just slow —
-    // an actual error, e.g. offline). See if the background download
-    // above has managed to finish in the meantime before giving up.
+    // Every direct attempt was truncated or failed outright. See if the
+    // background download above has managed to finish in the meantime
+    // before giving up.
     cached = await cache.match(request);
     if(!cached){
       return new Response('Media unavailable — check your connection and try again.', { status: 503 });
@@ -147,6 +152,48 @@ async function handleMediaRequest(request){
   headers.set('Content-Length', String(slice.byteLength));
 
   return new Response(slice, { status: 206, statusText: 'Partial Content', headers });
+}
+
+// Used only for the very first, not-yet-cached play (see handleMediaRequest
+// above). Fetches the request the player actually asked for (whichever byte
+// range that is) and — same reasoning as fetchAndCacheFullFile below —
+// checks the bytes that actually arrived against the response's own
+// declared Content-Length before trusting it. A dropped mobile connection
+// can end a response early without fetch() itself throwing, so without this
+// check a truncated stream would get handed straight to the player, which
+// is what "plays, then errors partway through" actually was. Retries a
+// couple of times with a short pause; returns null if every attempt is
+// truncated or fails outright, so the caller can fall back to whatever the
+// background full-file download has managed to produce in the meantime.
+async function fetchDirectVerified(request){
+  const maxAttempts = 3;
+  for(let attempt = 0; attempt < maxAttempts; attempt++){
+    try{
+      const response = await fetch(request);
+      if(!(response.ok || response.status === 206)){
+        // A real HTTP error (404, 410, etc.) — retrying won't change it.
+        return response;
+      }
+      const declaredLength = response.headers.get('content-length');
+      const buffer = await response.clone().arrayBuffer();
+      if(declaredLength && buffer.byteLength !== parseInt(declaredLength, 10)){
+        // Truncated mid-stream — try again rather than handing this to
+        // the player.
+        if(attempt < maxAttempts - 1){
+          await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+          continue;
+        }
+        return null;
+      }
+      return response;
+    }catch(e){
+      // A genuine network-level failure — worth a retry too.
+      if(attempt < maxAttempts - 1){
+        await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+  }
+  return null;
 }
 
 // Downloads the complete file and stores it in the cache, retrying a
